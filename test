@@ -1,0 +1,138 @@
+module CubicSplineModule
+    implicit none
+
+    integer, parameter :: wp = kind(1.0d0), nn = 4
+    
+    type CubicSpline
+        real(wp), dimension(nn) :: x, y, M
+        real(wp), dimension(nn-1) :: h
+    contains
+        procedure :: init
+        procedure :: div
+        procedure :: assemble
+    end type CubicSpline
+
+contains
+    subroutine linear_solve(a, b, c, d, x, c1, c2)
+        real(wp), intent(in) :: a(:), b(:), c(:), d(:)
+        real(wp), intent(out) :: x(:)
+        real(wp), intent(in) :: c1, c2
+        real(wp), allocatable :: aa(:), bb(:), cc(:), dd(:)
+        integer :: n, i
+
+        if (size(a) < 2 .or. size(b) < 2 .or. size(c) < 2 .or. size(d) < 2) then
+            error stop "Arrays must have at least 2 elements"
+        end if
+
+        n = size(d) - 2
+        allocate(aa(n), bb(n), cc(n), dd(n))
+
+        aa = a(2:n+1)
+        bb = b(2:n+1)
+        cc = c(2:n+1)
+        dd = d(2:n+1)
+
+        do i = 2, n
+            dd(i) = dd(i) - dd(i-1) / bb(i-1) * aa(i-1)
+            bb(i) = bb(i) - cc(i-1) / bb(i-1) * aa(i-1)
+        end do
+
+        do i = n-1, 1, -1
+            dd(i) = dd(i) - dd(i+1) / bb(i+1) * cc(i)
+        end do
+
+        x(2:n+1) = dd(1:n) / bb(1:n)
+        x(1) = (d(1) - c(1)*x(2) - c1*x(3)) / b(1)
+        x(n+2) = (d(n+2) - a(n+1)*x(n+1) - c2*x(n)) / b(n+2)
+
+        deallocate(aa, bb, cc, dd)
+    end subroutine linear_solve
+
+    subroutine init(this, x, y)
+        class(CubicSpline), intent(inout) :: this
+        real(wp), intent(in) :: x(nn), y(nn)
+        this%x = x
+        this%y = y
+        this%h = this%x(2:) - this%x(:nn-1)
+    end subroutine init
+
+    function div(this, i, j, k) result(res)
+        class(CubicSpline), intent(in) :: this
+        integer, intent(in) :: i, j, k
+        real(wp) :: res
+        res = ((this%y(k) - this%y(j))/(this%x(k) - this%x(j)) - &
+               (this%y(j) - this%y(i))/(this%x(j) - this%x(i))) / &
+              (this%x(k) - this%x(i))
+    end function div
+
+    subroutine assemble(this)
+        class(CubicSpline), intent(inout) :: this
+        integer :: i, n
+        real(wp), dimension(nn-1) :: mu, lam, mu1, lam1, h
+        real(wp), dimension(nn) :: x, y, d, b, M
+        real(wp), dimension(nn-1) :: a, c
+        real(wp), dimension(nn-2) :: hsum, hdel2, hdel1
+        real(wp) :: c1, c2
+
+        n = nn
+        x = this%x
+        y = this%y
+        h = this%h
+        d = 0.0_wp  ! Initialize all elements to 0
+        
+        mu = h(:n-1)/(h(:n-1) + h(2:))
+        lam = 1.0_wp - mu
+        
+        mu1 = mu
+        lam1 = lam
+        mu1(n-1) = -1.0_wp
+        lam1(1) = -1.0_wp
+        mu1(n-2) = mu(n-1) - lam(n-1)
+        mu1(1) = 0.0_wp
+        lam1(n-1) = 0.0_wp
+        lam1(2) = lam(1) - mu(1)
+        
+        hsum = h(:n-2) + h(2:n-1)
+        hdel2 = h(2:n-1)
+        hdel1 = h(:n-2)
+        
+        b = 2.0_wp
+        c = lam1
+        a = mu1
+        
+        c1 = mu(1)
+        c2 = lam(n-1)
+        
+        b(1) = lam(1)
+        b(2) = 1.0_wp + lam(1)
+        b(n) = mu(n-1)
+        b(n-1) = 1.0_wp + mu(n-1)
+        
+        do i = 1, n-2
+            d(i+1) = 6.0_wp/hsum(i)*((y(i+2) - y(i+1))/hdel2(i) - (y(i+1) - y(i))/hdel1(i))
+        end do
+        
+        d(1) = 0.0_wp
+        d(n) = 0.0_wp
+        d(2) = d(2)*lam(1)
+        d(n-1) = d(n-1)*mu(n-1)
+        
+        call linear_solve(a, b, c, d, M, c1, c2)
+        this%M = M
+    end subroutine assemble 
+end module CubicSplineModule
+
+program test_spline
+    use CubicSplineModule
+    implicit none
+
+    type(CubicSpline) :: spline
+    real(wp) :: x(nn), y(nn)
+
+    x = [0.0_wp, 1.0_wp, 2.0_wp, 3.0_wp]
+    y = [0.0_wp, 1.0_wp, 4.0_wp, 9.0_wp]  ! y = x^2
+
+    call spline%init(x, y)
+    call spline%assemble()
+
+end program test_spline

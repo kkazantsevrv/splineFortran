@@ -1,0 +1,2 @@
+gfortran -o test.com spline.f90
+./test.com
