@@ -1,7 +1,7 @@
 module CubicSplineModule
     implicit none
 
-    integer, parameter :: wp = kind(1.0d0), nn = 10
+    integer, parameter :: wp = kind(1.0d0), nn = 1000
     
     type CubicSpline
         real(wp), dimension(nn) :: x, y, M
@@ -11,8 +11,8 @@ module CubicSplineModule
         procedure :: div
         procedure :: assemble
         procedure :: sinta
-        ! procedure :: sintall
-        ! procedure :: spl
+        procedure :: sintall
+        procedure :: spl
     end type CubicSpline
 
 contains
@@ -23,12 +23,10 @@ contains
         real(wp), allocatable :: aa(:), bb(:), cc(:), dd(:)
         integer :: n, i
 
-        ! Проверка размеров массивов
         if (size(a) < 2 .or. size(b) < 2 .or. size(c) < 2 .or. size(d) < 2) then
             error stop "Arrays must have at least 2 elements"
         end if
 
-        ! Выделяем подмассивы (игнорируем первый и последний элементы)
         n = size(d) - 2
         allocate(aa(n), bb(n), cc(n), dd(n))
 
@@ -37,21 +35,17 @@ contains
         cc = c(2:n+1)
         dd = d(2:n+1)
 
-        ! Прямой ход прогонки
         do i = 2, n
             dd(i) = dd(i) - dd(i-1) / bb(i-1) * aa(i-1)
             bb(i) = bb(i) - cc(i-1) / bb(i-1) * aa(i-1)
         end do
 
-        ! Обратный ход прогонки
         do i = n-1, 1, -1
             dd(i) = dd(i) - dd(i+1) / bb(i+1) * cc(i)
         end do
 
-        ! Решение для внутренних точек
         x(2:n+1) = dd(1:n) / bb(1:n)
 
-        ! Граничные условия
         x(1) = (d(1) - c(1)*x(2) - c1*x(3)) / b(1)
         x(n+2) = (d(n+2) - a(n+1)*x(n+1) - c2*x(n)) / b(n+2)
         deallocate(aa, bb, cc, dd)
@@ -154,38 +148,52 @@ contains
         do i = 1, n-1
             ls1(i+1) = ls1(i+1) + ls1(i)
         end do
-        print*, ls1
+        ! print*, ls1
     end subroutine sinta
 
-    subroutine sintall(this, ip, ls1)
+    subroutine spl(this, p, f)
         class(CubicSpline), intent(in) :: this
-        integer, intent(in) :: ip
-        real(wp), intent(out) :: ls1(nn)
-        integer :: i, n
-        real(wp) :: ls(nn-1)
+        real(wp), intent(in) :: p
+        real(wp), intent(out) :: f
+        integer :: ip, i, n
         n = nn
 
-        ls = 0.0_wp
-        ls1 = 0.0_wp
         do i = 1, n-1
-            ls(i) = -this%h(i)**3/24.0_wp*(this%M(i) + this%M(i+1))
+            if (p > this%x(i) - 1e-15_wp .and. p < this%x(i+1) + 1e-15_wp) then
+                ip = i
+                exit
+            end if
+        end do
+        ip = ip + 1
+        f = this%M(ip-1)*((this%x(ip) - p)**3)/6.0_wp/this%h(ip-1) + this%M(ip)*(p - this%x(ip-1))**3/6.0/this%h(ip-1) + &
+            (this%y(ip-1) - this%M(ip-1)*this%h(ip-1)**2/6.0_wp)*(this%x(ip) - p)/this%h(ip-1) - &
+            (this%y(ip) - this%M(ip)*this%h(ip-1)**2/6.0_wp)*(this%x(ip-1) - p)/this%h(ip-1)
+
+    end subroutine spl
+
+    subroutine sintall(this, ip, sm)
+        class(CubicSpline), intent(in) :: this
+        integer, intent(in) :: ip
+        real(wp), intent(out) :: sm
+        integer :: i, n
+        n = nn
+        sm = 0.0_wp
+
+        do i = 1, n-1
+            sm = sm - this%h(i)**3/24.0_wp*(this%M(i) + this%M(i+1))
         end do
         if ( ip /= 1 .and. ip /= n ) then
-            ls(ip-1) = ls(ip-1) + this%h(ip-1)/2.0_wp
-            ls(ip) = ls(ip) + this%h(ip)/2.0_wp
+            sm = sm + this%h(ip-1)/2.0_wp
+            sm = sm + this%h(ip)/2.0_wp
         end if
         if (ip == 1) then
-            ls(1) = ls(1) + this%h(1)/2.0_wp
+            sm = sm + this%h(1)/2.0_wp
         end if
         if (ip == n) then
-            ls(n-1) = ls(n-1) + this%h(n-1)/2.0_wp
+            sm = sm + this%h(n-1)/2.0_wp
         end if
-        ls1(2:) = ls
-        do i = 1, n-1
-            ls1(i+1) = ls1(i+1) + ls1(i)
-        end do
-        print*, ls1
-    end subroutine sinta
+        ! print*, sm
+    end subroutine sintall
 end module CubicSplineModule
 
 program test_spline
@@ -193,8 +201,8 @@ program test_spline
     implicit none
 
     type(CubicSpline) :: spline
-    real(wp) :: x(nn), y(nn)
-    real(wp) :: point, interpolated_value, ls(nn)
+    real(wp) :: x(nn), y(nn), Mmatr(nn, nn)
+    real(wp) :: point, interpolated_value, ls(nn), sm, f
     integer :: i
     do i = 1, nn
         x(i) = ((i-1) * 1.0_wp / (nn-1))**2
@@ -205,7 +213,8 @@ program test_spline
         call spline%init(x, y)
         call spline%assemble()
         call spline%sinta(i, ls)
+        Mmatr(i, :) = ls
         y(i) = 0.0_wp
     end do
-
+    Mmatr = transpose(Mmatr)
 end program test_spline
